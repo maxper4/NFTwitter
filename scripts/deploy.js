@@ -5,7 +5,8 @@ const main = async () => {
   
     await contract.deployed();
     console.log("Contract deployed to:", contract.address);
-  
+
+    await contract.tweet("Tweet", 0)
   };
   
   const runMain = async () => {

@@ -5,7 +5,6 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "./libraries/Base64.sol";
-import "hardhat/console.sol";
 
 contract NFTwitter is ERC721 {
 
@@ -49,8 +48,6 @@ contract NFTwitter is ERC721 {
         }
         
         _tweetIds++;
-
-        console.log("New tweet with parent tweet %s : %s", parentId, content);
 
         emit newTweet(newTweetId);
     }

@@ -1,15 +1,8 @@
-# Basic Sample Hardhat Project
+# NFTwitter 
 
-This project demonstrates a basic Hardhat use case. It comes with a sample contract, a test for that contract, a sample script that deploys that contract, and an example of a task implementation, which simply lists the available accounts.
+This is a twitter clone but with NFTs. Yu can post a tweet, reply to another one, like and send tips. All tweets are NFTs and can then be traded on OpenSea for example. The smart-contract is live on the Goerli Testnet: "0x182dD618C81e7b1DaFC83f91857eD6c1D35dC1B6" and the frontend is deployed on replit: https://nftwitter-front.maxper4.repl.co/.
 
-Try running some of the following tasks:
+Units tests are available in the `test` folder:
+    
+        $ npx hardhat test 
 
-```shell
-npx hardhat accounts
-npx hardhat compile
-npx hardhat clean
-npx hardhat test
-npx hardhat node
-node scripts/sample-script.js
-npx hardhat help
-```

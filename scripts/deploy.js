@@ -1,13 +1,12 @@
 const main = async () => {
+    const [deployer] = await hre.ethers.getSigners();
     const contractFactory = await hre.ethers.getContractFactory('NFTwitter');
     
-    const contract = await contractFactory.deploy();
+    const contract = await contractFactory.deploy(deployer.address);
   
     await contract.deployed();
     console.log("Contract deployed to:", contract.address);
-
-    await contract.tweet("Tweet", 0)
-  };
+};
   
   const runMain = async () => {
     try {

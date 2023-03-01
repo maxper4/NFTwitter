@@ -1,5 +1,5 @@
 {
-  "name": "hardhat-project",
+  "name": "nftwitter",
   "devDependencies": {
     "@nomiclabs/hardhat-ethers": "^2.0.3",
     "@nomiclabs/hardhat-etherscan": "^2.1.8",
@@ -7,10 +7,14 @@
     "chai": "^4.3.4",
     "ethereum-waffle": "^3.4.0",
     "ethers": "^5.5.2",
-    "hardhat": "^2.8.0"
+    "hardhat": "^2.12.7"
   },
   "dependencies": {
+    "@nomicfoundation/hardhat-network-helpers": "^1.0.8",
     "@openzeppelin/contracts": "^4.4.1",
     "dotenv": "^10.0.0"
+  },
+  "author": {
+    "name": "maxper"
   }
 }

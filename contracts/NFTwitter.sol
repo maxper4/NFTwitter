@@ -1,14 +1,21 @@
 // SPDX-License-Identifier: UNLICENSED
 
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.17;
 
-import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "./libraries/Base64.sol";
+import "@openzeppelin/contracts/utils/Base64.sol";
 
-contract NFTwitter is ERC721, Ownable {
+error TweetDoesNotExists(uint256 tweetId);
+error WrongParameters();
+error TweetEmpty();
+error OnlyOwnerOfTweet(uint256 tweetId);
+error OwnerLikingTweet(uint256 tweetId);
+error TweetAlreadyLiked(uint256 tweetId);
+error TweetAlreadyUnliked(uint256 tweetId);
 
+contract NFTwitter is ERC721Enumerable , Ownable {
     struct Tweet {
         uint256 tweetId;
         uint256 parentId;
@@ -20,39 +27,44 @@ contract NFTwitter is ERC721, Ownable {
     }
 
     uint256 private _tweetIds;
-    mapping(uint256 => Tweet) private tweets;
-    mapping(address => uint256[]) private tweetsByOwner;
-    mapping(uint256 => uint256[]) private tweetsReplies;
-    mapping(uint256 => address[]) private likersByTweetId;
+    mapping(uint256 => Tweet) public tweets;
+    mapping(uint256 => uint256[]) public tweetsReplies;
+    mapping(uint256 => mapping(address => bool)) public likedTweet;
 
     string baseSvg = "<svg xmlns='http://www.w3.org/2000/svg' preserveAspectRatio='xMinYMin meet' viewBox='0 0 350 350'><style>.base { fill: white; font-family: serif; font-size: 24px; }</style><rect width='100%' height='100%' fill='black' /><text x='50%' y='50%' class='base' dominant-baseline='middle' text-anchor='middle'>";
 
-    uint256 private tipsOwnerPercent;
-    uint256 private tipsAuthorPercent;
-    uint256 private tipsPlatformPercent;
+    uint256 public tipsOwnerPercent;
+    uint256 public tipsAuthorPercent;
+    uint256 public tipsPlatformPercent;
 
-    event newTweet(uint256 tweetId);
-    event tweetDeleted(uint256 tweetId);
-    event tweetLiked(uint256 tweetId, address liker, uint256 newNbLikes);
-    event tweetUnliked(uint256 tweetId, address liker, uint256 newNbLikes);
+    address public royaltiesReceiver;
 
-    modifier requireTweetExists(uint256 _tokenId)
-    {
-        require(_exists(_tokenId), "Tweet does not exists");
+    event NewTweet(uint256 tweetId);
+    event TweetDeleted(uint256 tweetId);
+    event TweetLiked(uint256 tweetId, address liker, uint256 newNbLikes);
+    event TweetUnliked(uint256 tweetId, address liker, uint256 newNbLikes);
+
+    modifier requireTweetExists(uint256 _tokenId) {
+        if(!_exists(_tokenId)) {
+            revert TweetDoesNotExists(_tokenId);
+        }
         _;
     }
 
-    constructor() ERC721("NFTwitter", "NFTT") Ownable() {
+    constructor(address _royalties) ERC721("NFTwitter", "NFTT") Ownable() {
         _tweetIds = 1;
 
         tipsOwnerPercent = 70;
         tipsAuthorPercent = 20;
         tipsPlatformPercent = 10;
+
+        royaltiesReceiver = _royalties;
     }
 
-    function updateTipsPercent(uint256 owner, uint256 author, uint256 platform) external onlyOwner
-    {
-        require(owner + author + platform == 100, "All percents should reach 100%");
+    function updateTipsPercent(uint256 owner, uint256 author, uint256 platform) external onlyOwner {
+        if(owner + author + platform != 100){
+            revert WrongParameters();
+        }
 
         tipsOwnerPercent = owner;
         tipsAuthorPercent = author;
@@ -60,8 +72,14 @@ contract NFTwitter is ERC721, Ownable {
     }
 
     function tweet(string memory content, uint256 parentId) external {
-        require(bytes(content).length > 0, "Tweet must have a content !");
-        require(_exists(parentId) || parentId == 0, "Parent tweet does not exist");         //no parent -> id = 0 (tweets ids starts at 1)
+        if(bytes(content).length == 0){
+            revert TweetEmpty();
+        }
+
+        if(parentId != 0 && !_exists(parentId)) {   //no parent -> id = 0 (tweets ids starts at 1)
+            revert TweetDoesNotExists(parentId);
+        }
+
         uint256 newTweetId = _tweetIds;
         _safeMint(msg.sender, newTweetId);
 
@@ -69,66 +87,71 @@ contract NFTwitter is ERC721, Ownable {
             tweetId: newTweetId, parentId: parentId, content: content, timestamp: block.timestamp, author: msg.sender, owner: msg.sender, likes: 0
         });
 
-        tweetsByOwner[msg.sender].push(_tweetIds);
-        if(parentId != 0)
-        {
+        if(parentId != 0) {
             tweetsReplies[parentId].push(newTweetId);
         }
         
-        _tweetIds++;
+        ++_tweetIds;
 
-        emit newTweet(newTweetId);
+        emit NewTweet(newTweetId);
     }
 
     function deleteTweet(uint256 _tokenId) external {
+        if(ownerOf(_tokenId) != msg.sender) {
+            revert OnlyOwnerOfTweet(_tokenId);
+        }
+
         _burn(_tokenId);
 
-        emit tweetDeleted(_tokenId);
+        uint256 parentTweetId = tweets[_tokenId].parentId;
+
+        delete tweets[_tokenId];
+
+        if(parentTweetId != 0) {
+            uint256 lastReplyId = tweetsReplies[parentTweetId][tweetsReplies[parentTweetId].length - 1];
+            tweetsReplies[parentTweetId][_tokenId] = lastReplyId;
+            tweetsReplies[parentTweetId].pop();
+        }
+
+        emit TweetDeleted(_tokenId);
     }
 
     function likeTweet(uint256 _tokenId) external requireTweetExists(_tokenId) {
-        require(tweets[_tokenId].author != msg.sender, "You can't like your own tweet !");
-        require(!didILikedTweet(_tokenId), "Tweet already liked !");
+        if(ownerOf(_tokenId) == msg.sender) {
+            revert OwnerLikingTweet(_tokenId);
+        }
+
+        if(likedTweet[_tokenId][msg.sender]) {
+            revert TweetAlreadyLiked(_tokenId);
+        }
         
-        likersByTweetId[_tokenId].push(msg.sender);
+        likedTweet[_tokenId][msg.sender] = true;
         tweets[_tokenId].likes++;
 
-        emit tweetLiked(_tokenId, msg.sender, tweets[_tokenId].likes);
+        emit TweetLiked(_tokenId, msg.sender, tweets[_tokenId].likes);
     }
 
     function unlikeTweet(uint256 _tokenId) external requireTweetExists(_tokenId) {
-        address[] memory likers = likersByTweetId[_tokenId];
-        bool found = false;
-        uint indice = 0;
-        for(uint i = 0; i < likers.length && !found; i++)
-        {
-            if(likers[i] == msg.sender)
-            {
-                found = true;
-                indice = i;
-            }
+        if(!likedTweet[_tokenId][msg.sender]) {
+            revert TweetAlreadyUnliked(_tokenId);
         }
 
-        require(found, "Tweet not liked !");
-
-        delete likersByTweetId[_tokenId][indice];
+        delete likedTweet[_tokenId][msg.sender];
         tweets[_tokenId].likes--;
 
-        emit tweetUnliked(_tokenId, msg.sender, tweets[_tokenId].likes);
+        emit TweetUnliked(_tokenId, msg.sender, tweets[_tokenId].likes);
     }
 
     function tipTweet(uint256 _tokenId) external payable requireTweetExists(_tokenId) {
         require(msg.value > 0);
         
         Tweet memory tweetTipped = tweets[_tokenId];
-        if(tweetTipped.author == tweetTipped.owner)
-        {
+        if(tweetTipped.author == tweetTipped.owner) {
             uint256 authorOwnerPercent = tipsAuthorPercent + tipsOwnerPercent;
             uint authorAmount = authorOwnerPercent * msg.value / 100;
             payable(tweetTipped.author).transfer(authorAmount);
         }
-        else
-        {
+        else {
             uint authorAmount = tipsAuthorPercent * msg.value / 100;
             payable(tweetTipped.author).transfer(authorAmount);
 
@@ -137,19 +160,18 @@ contract NFTwitter is ERC721, Ownable {
         }
 
         uint platformAmount = tipsPlatformPercent * msg.value / 100;
-        payable(owner()).transfer(platformAmount);
+        payable(royaltiesReceiver).transfer(platformAmount);
     }
 
-    function _transfer(
+    function _afterTokenTransfer(
         address from,
         address to,
-        uint256 tokenId
+        uint256 tokenId,
+        uint256 batchSize
     ) internal virtual override {
-        super._transfer(from, to, tokenId);
+        super._afterTokenTransfer(from, to, tokenId, batchSize);
 
         tweets[tokenId].owner = to;
-        tweetsByOwner[to].push(tokenId);
-        delete tweetsByOwner[from][tokenId];
     }
 
     function tokenURI(uint256 _tokenId) public view override requireTweetExists(_tokenId) returns (string memory) {
@@ -181,65 +203,9 @@ contract NFTwitter is ERC721, Ownable {
         return string(abi.encodePacked('data:image/svg+xml;base64,', Base64.encode(bytes(svg))));
     }
 
-    function getTweetsOfOwner(address owner) public view returns (Tweet[] memory) {
-        uint256[] memory ownerTweets = tweetsByOwner[owner];
-        uint totalCount = ownerTweets.length;
-
+    function getTweets() public view returns (Tweet[] memory tweetsList, bool[] memory likedBySender) {
         uint count = 0;
-        for(uint i = 1; i < totalCount; i++)
-        {
-            if(_exists(ownerTweets[i]))
-                count++;
-        }
-
-        Tweet[] memory tweetsList = new Tweet[](count);
-        uint indice = 0;
-        for(uint i = 0; i < count; i++)
-        {
-            if(_exists(ownerTweets[i]))
-            {
-                tweetsList[indice] = tweets[ownerTweets[i]];
-                indice++;
-            }
-        }
-
-        return tweetsList;
-    }
-
-    function getTweet(uint256 _tokenId) public view requireTweetExists(_tokenId) returns (Tweet memory) {
-        return tweets[_tokenId];
-    }
-
-    function getReplies(uint256 _tokenId) public view requireTweetExists(_tokenId) returns (Tweet[] memory) {
-        uint256[] memory replies = tweetsReplies[_tokenId];
-        uint totalCount = replies.length;
-
-        uint count = 0;
-        for(uint i = 1; i < totalCount; i++)
-        {
-            if(_exists(replies[i]))
-                count++;
-        }
-
-        Tweet[] memory tweetsList = new Tweet[](count);
-        uint indice = 0;
-        for(uint i = 0; i < count; i++)
-        {
-            if(_exists(replies[i]))
-            {
-                tweetsList[indice] = tweets[replies[i]];
-                indice++;
-            }
-        }
-
-        return tweetsList;
-    }
-
-    function getTweets() public view returns (Tweet[] memory tweetsList, bool[] memory likedBySender) 
-    {
-        uint count = 0;
-        for(uint i = 1; i < _tweetIds; i++)
-        {
+        for(uint i = 1; i < _tweetIds; i++){
             if(_exists(i))
                 count++;
         }
@@ -247,35 +213,13 @@ contract NFTwitter is ERC721, Ownable {
         likedBySender = new bool[](count);
 
         uint indice = 0;
-        for(uint i = 1; i < _tweetIds; i++)
-        {
-            if(_exists(i))
-            {
+        for(uint i = 1; i < _tweetIds; i++) {
+            if(_exists(i)) {
                 tweetsList[indice] = tweets[i];
-                likedBySender[indice] = didILikedTweet(tweets[i].tweetId);
+                likedBySender[indice] = likedTweet[i][msg.sender];
                 indice++;
             }
         }
         return (tweetsList, likedBySender);
-    }
-
-    function didUserLikedTweet(address user, uint256 _tokenId) public view requireTweetExists(_tokenId) returns (bool liked) 
-    {
-        address[] memory likers = likersByTweetId[_tokenId];
-        bool found = false;
-        for(uint i = 0; i < likers.length && !found; i++)
-        {
-            if(likers[i] == user)
-            {
-                found = true;
-            }
-        }
-
-        return found;
-    }
-
-    function didILikedTweet(uint256 _tokenId) public view requireTweetExists(_tokenId) returns (bool liked) 
-    {
-        return didUserLikedTweet(msg.sender, _tokenId);
     }
 }
